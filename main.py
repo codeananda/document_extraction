@@ -13,22 +13,30 @@ from uuid import uuid4
 import numpy as np
 import requests
 import tiktoken
+import torch
 from bs4 import BeautifulSoup, Comment
 from doctran import Doctran, ExtractProperty
 from dotenv import load_dotenv, find_dotenv
 from evaluate import load
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
+from langchain_community.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings # from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
 )
 from loguru import logger
-from openai import OpenAI
+import openai #
 from pdfminer.high_level import extract_text
 from sklearn.metrics.pairwise import cosine_similarity
 
 _ = load_dotenv(find_dotenv())
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = openai.ChatCompletion(api_key=os.getenv("OPENAI_API_KEY")) # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+MAX_EMBEDDING_TOKEN_LENGTH = 4096
+
+OPENAI_EMBEDDING_MODEL_NAME = "text-embedding-ada-002"
+
+HUGGINGFACE_EMBEDDING_MODEL_NAME = "nomic-embed-text-v1" # "e5-base-v2"
+HUGGINGFACE_EMBEDDING_PATH = "nomic-ai/nomic-embed-text-v1" # "intfloat/e5-base-v2"
+HUGGINGFACE_EMBEDDING_PREFIX = "" # "query: "
 
 def _num_tokens_from_string(string: str, encoding_name: str = "gpt-3.5-turbo") -> int:
     """Returns the number of tokens in a text string."""
@@ -275,21 +283,22 @@ async def _extract_title(string: str) -> str:
         required=True,
     )
     try:
-        document = await document.extract(properties=[properties]).execute()
+        document = document.extract(properties=[properties]).execute()
         return document.transformed_content
     except Exception as e:
         logger.error(f"Error extracting title from string: {e}")
         return "None"
 
 
+
 async def divide_sections_if_too_large(
     article_dict: Dict[str, str],
-    max_section_length: int = 512,
+    max_section_token_length: int = MAX_EMBEDDING_TOKEN_LENGTH,
     doc_type: str = "patent",
 ) -> Dict[str, str]:
     """This function takes an existing dictionary containing the section heaadings and
     content (from above functions), checks if any section is too large (i.e., more
-    than 512 tokens), divides such sections into smaller sections, generates a new
+    than MAX_EMBEDDING_TOKEN_LENGTH tokens), divides such sections into smaller sections, generates a new
     title, and returns the updated dictionary
     """
     if doc_type not in ["patent", "wikipedia", "arxiv"]:
@@ -311,49 +320,56 @@ async def divide_sections_if_too_large(
         return result
 
     for heading, content in start_dict.items():
-        num_tokens = _num_tokens_from_string(content)
-        # Each section must contain something, otherwise the embedding models fail
-        if num_tokens == 0:
+        content_length = len(content)
+        if content_length == 0:
             final_dict[heading] = " "
-        # If the section is small enough, add it to the final dict
-        elif num_tokens <= max_section_length:
+        elif content_length <= max_section_token_length: # characters length is always less than token length
             final_dict[heading] = content
-        # If section is too big, split into smaller sections, extract title, and add to final dict
         else:
-            # Split
-            char_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=max_section_length,
-                chunk_overlap=0,
-                # ' ' separator means sometimes sentences will be cut in two to ensure
-                # the chunk size is not exceeded
-                separators=["\n\n", "\n", " "],
-                length_function=_num_tokens_from_string,
-            )
-            splits: List[str] = char_splitter.split_text(content)
-            # Keep heading the same but add numbers to sections e.g. 'h2 Reference' -> 'h2 Reference 1'
-            # TODO - add a continue statement here?
-            if doc_type in ["wikipedia", "arxiv"] and is_reference_section(heading):
-                for i, split in enumerate(splits, start=1):
-                    new_heading = f"{heading} {i}"
-                    final_dict[new_heading] = split
-                    logger.info(
-                        f"Added '{new_heading}' split original heading '{heading}'"
-                    )
+            num_tokens = _num_tokens_from_string(content)
+            logger.info(f"Content character length: {len(content)} tokens: {num_tokens} for '{heading}'")
+            # Each section must contain something, otherwise the embedding models fail
+            if num_tokens == 0:
+                final_dict[heading] = " "
+            # If the section is small enough, add it to the final dict
+            elif num_tokens <= max_section_token_length:
+                final_dict[heading] = content
+            # If section is too big, split into smaller sections, extract title, and add to final dict
             else:
-                # Create new titles for each split
-                for split in splits:
-                    # Headings are of the form h1, h2, h3 etc. we split it into more of the same level
-                    if doc_type == "wikipedia":
-                        heading_level = int(heading[1])
-                        title = await _extract_title(split)
-                        new_heading = f"h{heading_level} {title}"
-                    # Heading levels aren't important for other doc_types
-                    else:
-                        new_heading = await _extract_title(split)
-                    final_dict[new_heading] = split
-                    logger.info(
-                        f"Added '{new_heading}' split original heading '{heading}'"
-                    )
+                # Split
+                char_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=max_section_token_length,
+                    chunk_overlap=0,
+                    # ' ' separator means sometimes sentences will be cut in two to ensure
+                    # the chunk size is not exceeded
+                    separators=["\n\n", "\n", " "],
+                    length_function=_num_tokens_from_string,
+                )
+                splits: List[str] = char_splitter.split_text(content)
+                # Keep heading the same but add numbers to sections e.g. 'h2 Reference' -> 'h2 Reference 1'
+                # TODO - add a continue statement here?
+                if doc_type in ["wikipedia", "arxiv"] and is_reference_section(heading):
+                    for i, split in enumerate(splits, start=1):
+                        new_heading = f"{heading} {i}"
+                        final_dict[new_heading] = split
+                        logger.info(
+                            f"Added '{new_heading}' split original heading '{heading}'"
+                        )
+                else:
+                    # Create new titles for each split
+                    for split in splits:
+                        # Headings are of the form h1, h2, h3 etc. we split it into more of the same level
+                        if doc_type == "wikipedia":
+                            heading_level = int(heading[1])
+                            title = await _extract_title(split)
+                            new_heading = f"h{heading_level} {title}"
+                        # Heading levels aren't important for other doc_types
+                        else:
+                            new_heading = await _extract_title(split)
+                        final_dict[new_heading] = split
+                        logger.info(
+                            f"Added '{new_heading}' split original heading '{heading}'"
+                        )
 
     n_keys_start = len(start_dict.keys())
     n_keys_final = len(final_dict.keys())
@@ -383,22 +399,22 @@ def _gen_embed_section_content(
         The total number of sections, by default 1
     """
     # Normalized by default
-    embed_ada = OpenAIEmbeddings(
-        model="text-embedding-ada-002",
+    embed_OPENAI = OpenAIEmbeddings(
+        model=OPENAI_EMBEDDING_MODEL_NAME,
     )
 
-    embed_e5 = HuggingFaceEmbeddings(
-        model_name="intfloat/e5-base-v2", encode_kwargs={"normalize_embeddings": True}
+    embed_HF = HuggingFaceEmbeddings(
+        model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True}
     )
 
     section_json = {
         "section_id": id,
         "section": heading,
         "content": content,
-        "section_embedding_1": embed_ada.embed_query(heading),
-        "section_embedding_2": embed_e5.embed_query("query: " + heading),
-        "content_embedding_1": embed_ada.embed_query(content),
-        "content_embedding_2": embed_e5.embed_query("query: " + content),
+        "section_embedding_1": embed_OPENAI.embed_query(heading),
+        "section_embedding_2": embed_HF.embed_query(HUGGINGFACE_EMBEDDING_PREFIX + heading),
+        "content_embedding_1": embed_OPENAI.embed_query(content),
+        "content_embedding_2": embed_HF.embed_query(HUGGINGFACE_EMBEDDING_PREFIX + content),
     }
 
     logger.info(
@@ -500,12 +516,12 @@ def generate_embeddings_plan_and_section_content(
     plan_embed_1 = _gen_embed_plan(plan, 1)
     plan_embed_2 = _gen_embed_plan(plan, 2)
     # Normalized by default
-    embed_ada = OpenAIEmbeddings(
-        model="text-embedding-ada-002",
+    embed_OPENAI = OpenAIEmbeddings(
+        model=OPENAI_EMBEDDING_MODEL_NAME,
     )
 
-    embed_e5 = HuggingFaceEmbeddings(
-        model_name="intfloat/e5-base-v2", encode_kwargs={"normalize_embeddings": True}
+    embed_HF = HuggingFaceEmbeddings(
+        model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True}
     )
 
     try:
@@ -513,15 +529,15 @@ def generate_embeddings_plan_and_section_content(
             "id": str(uuid4()),
             "title": title,
             "abstract": abstract,
-            "title_embedding_1": embed_ada.embed_query(title),
-            "title_embedding_2": embed_e5.embed_query("query: " + title),
-            "abstract_embedding_1": embed_ada.embed_query(abstract),
-            "abstract_embedding_2": embed_e5.embed_query("query: " + abstract),
+            "title_embedding_1": embed_OPENAI.embed_query(title),
+            "title_embedding_2": embed_HF.embed_query(HUGGINGFACE_EMBEDDING_PREFIX + title),
+            "abstract_embedding_1": embed_OPENAI.embed_query(abstract),
+            "abstract_embedding_2": embed_HF.embed_query(HUGGINGFACE_EMBEDDING_PREFIX + abstract),
             "plan": plan,
             "plan_embedding_1": plan_embed_1,
             "plan_embedding_2": plan_embed_2,
-            "embedding1_model": "text-embedding-ada-002",
-            "embedding2_model": "e5-base-v2",
+            "embedding1_model": OPENAI_EMBEDDING_MODEL_NAME,
+            "embedding2_model": HUGGINGFACE_EMBEDDING_MODEL_NAME,
             "success": True,
             "error": None,
         }
@@ -537,8 +553,8 @@ def generate_embeddings_plan_and_section_content(
             "plan": plan,
             "plan_embedding_1": None,
             "plan_embedding_2": None,
-            "embedding1_model": "text-embedding-ada-002",
-            "embedding2_model": "e5-base-v2",
+            "embedding1_model": OPENAI_EMBEDDING_MODEL_NAME,
+            "embedding2_model": HUGGINGFACE_EMBEDDING_MODEL_NAME,
             "success": False,
             "error": str(e),
         }
@@ -548,7 +564,7 @@ def generate_embeddings_plan_and_section_content(
 
 
 async def get_embeddings(
-    input: str | List[str], model: str = "text-embedding-ada-002"
+    input: str | List[str], model: str = OPENAI_EMBEDDING_MODEL_NAME
 ) -> List[float] | List[List[float]]:
     """This function takes one string or a list of strings and a model name,
     generates an embedding for each string in the list using the specified model,
@@ -559,18 +575,18 @@ async def get_embeddings(
     ----------
     input : str | List[str]
         The input string or list of strings to be embedded.
-    model : str, optional ['text-embedding-ada-002', 'e5-base-v2']
+    model : str, optional [OPENAI_EMBEDDING_MODEL_NAME, HUGGINGFACE_EMBEDDING_PATH]
         The name of the model to be used for embedding.
     """
-    if model == "text-embedding-ada-002":
+    if model == OPENAI_EMBEDDING_MODEL_NAME:
         embedder = OpenAIEmbeddings(model=model)
-    elif model == "e5-base-v2":
+    elif model == HUGGINGFACE_EMBEDDING_MODEL_NAME:
         embedder = HuggingFaceEmbeddings(
-            model_name=f"intfloat/{model}", encode_kwargs={"normalize_embeddings": True}
+            model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True}
         )
     else:
         raise ValueError(
-            f"Model name must be 'text-embedding-ada-002' or 'e5-base-v2'. Received {model}"
+            f"Model name must be OPENAI_EMBEDDING_MODEL_NAME or HUGGINGFACE_EMBEDDING_MODEL_NAME. Received {model}"
         )
 
     if isinstance(input, str):
@@ -879,6 +895,10 @@ async def extract_plan_and_content_patent(patent_file: str | Path) -> Dict[str, 
 
 
 if __name__ == "__main__":
+    arxiv = list(Path("data/arxiv").glob("*"))
+    for arx in arxiv:
+        asyncio.run(extract_plan_and_content_arxiv(arx))
+
     wikipedia_articles = [
         "https://en.wikipedia.org/wiki/Large_language_model",
         "https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)",
@@ -902,7 +922,3 @@ if __name__ == "__main__":
     ]
     for patent in patents:
         asyncio.run(extract_plan_and_content_patent(patent))
-
-    arxiv = list(Path("data/arxiv").glob("*"))
-    for arx in arxiv:
-        asyncio.run(extract_plan_and_content_arxiv(arx))
