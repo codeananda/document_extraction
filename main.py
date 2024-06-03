@@ -87,7 +87,7 @@ def load_arxiv_paper(path: str | Path) -> Dict[str, str]:
     # "I. Introduction", "1. Introduction", or "Contents".
     # We use a positive lookahead (?=...) to assert that the introduction or contents
     # pattern exists, but we don't include it in the main match.
-    pattern = r"abstract(.*?)(?=(i\. introduction|1\. introduction|contents))"
+    pattern = r"(?:abstract|this\s+paper)(.*?)(?=([i1][. ]+introduction|contents))"
 
     # The re.DOTALL flag allows the . in the pattern to match newline characters,
     match = re.search(pattern, text.lower(), re.DOTALL)
@@ -99,7 +99,7 @@ def load_arxiv_paper(path: str | Path) -> Dict[str, str]:
         abstract = match.group(1).strip()
 
     # Extract references section
-    pattern = r"references\n"
+    pattern = r"references\s*\n"
     matches = [match for match in re.finditer(pattern, text.lower())]
 
     references = ""
@@ -111,6 +111,7 @@ def load_arxiv_paper(path: str | Path) -> Dict[str, str]:
 
     content = text[abstract_end:reference_start]
 
+    print("EXTRACTION OVERVIEW:\nTitle:"+title[:50].replace("\n","\\n")+"...\nAbstract:"+abstract[:50].replace("\n","\\n")+"...\nContent:"+content[:50].replace("\n","\\n")+"...\nReferences:"+references[:50].replace("\n","\\n")+"...")
     article_dict = {
         "Title": title,
         "Abstract": abstract,
@@ -259,7 +260,7 @@ def load_wikipedia_url(url: str) -> Dict[str, str]:
             new_key = key.rsplit("[edit]", 1)[0]
             article_dict[new_key] = article_dict.pop(key)
 
-    del article_dict["h2 Contents"]
+    del article_dict["h2 Contents"] # TODO: check what is this specific case
     num_sections = len(article_dict.keys())
 
     logger.info(
@@ -311,12 +312,7 @@ async def divide_sections_if_too_large(
 
     def is_reference_section(heading: str):
         """Returns True if heading is a reference section."""
-        heading = heading.lower()
-        result = (
-            "reference" in heading
-            or "further reading" in heading
-            or "see also" in heading
-        )
+        result = re.search(r"reference|further reading|see also|bibliography|external links", heading, re.IGNORECASE)
         return result
 
     for heading, content in start_dict.items():
@@ -342,7 +338,7 @@ async def divide_sections_if_too_large(
                     chunk_overlap=0,
                     # ' ' separator means sometimes sentences will be cut in two to ensure
                     # the chunk size is not exceeded
-                    separators=["\n\n", "\n", " "],
+                    separators=["\n\n", "\n", ". ", ".", ", ", ",", " "],
                     length_function=_num_tokens_from_string,
                 )
                 splits: List[str] = char_splitter.split_text(content)
@@ -418,7 +414,7 @@ def _gen_embed_section_content(
     }
 
     logger.info(
-        f"{id}/{total_sections} - created section + content embeddings for {heading}"
+        f"{id}/{total_sections} - created section + content embeddings for {heading} - SECTION: {heading[:50]}... CONTENT: {content[:50]}..."
     )
 
     return section_json
@@ -671,7 +667,7 @@ def _compare_documents(
         f"\n\t{doc2_name} has {len(predict_plan)} sections."
     )
     total_comparisons = min(len(doc_plan), len(predict_plan))
-    # If plans have differnet lengths, just goes up to shortest
+    # If plans have different lengths, just goes up to shortest
     for idx, (p_dict, d_dict) in enumerate(zip(predict_plan, doc_plan), start=1):
         # Compute MAUVE
         mauve_results = mauve.compute(
@@ -782,9 +778,35 @@ def compare_documents_content(
     return _compare_documents(document1, document2, compare_on="content")
 
 
-async def extract_plan_and_content(input: str | Path, doc_type: str) -> Dict[str, Any]:
+def generate_title(input: str | Path, doc_type: str) -> str:
+    """Extracts the title from the input based on the document type."""
+    if doc_type == "wikipedia":
+        # For Wikipedia, we use the last part of the URL as the title
+        title = input.split("/")[-1].replace("_", " ")
+    elif doc_type == "arxiv":
+        # For arXiv, we use the file name without extension as the title
+        title = Path(input).stem.replace("_", " ")
+    elif doc_type == "patent":
+        # For patents, we read the first line and extract the title
+        with open(input, "r") as f:
+            first_line = f.readline()
+        title = first_line.split("\t")[-1].strip()
+        title = "".join(i for i in title if i not in "\/:*?<>|")  # Remove illegal characters
+    else:
+        raise ValueError(f"doc_type must be one of 'patent', 'wikipedia', or 'arxiv'. Received {doc_type}")
+    
+    return title
+
+async def extract_plan_and_content(input: str | Path, doc_type: str, skip_if_exists: bool = False) -> Dict[str, Any]:
     """Extract plans and content for a range of doc_types. Write ouputs to individual files.
     Return a dictionary containing the plan and content for the input."""
+    # test if file exists
+    target_title = generate_title(input, doc_type)
+    output_dir = Path(f"output/{doc_type}")
+    output_file = output_dir / Path(f"{target_title}.json")
+    if skip_if_exists and output_file.exists():
+        logger.info(f"\n\tFile already exists: {output_file.absolute()}")
+        return {"title": str(input), "content": "File already exists."}
     logger.info(f"\n\tExtracting plan and content for: {input}")
     start = time()
     # Load depending on doc_type
@@ -799,6 +821,7 @@ async def extract_plan_and_content(input: str | Path, doc_type: str) -> Dict[str
             f"doc_type must be one of 'patent', 'wikipedia', or 'arxiv'. "
             f"Received {doc_type}"
         )
+    #return article_dict
     # Divide and create embeddings
     article_dict = await divide_sections_if_too_large(article_dict, doc_type=doc_type)
     num_sections = len(article_dict.keys())
@@ -895,9 +918,12 @@ async def extract_plan_and_content_patent(patent_file: str | Path) -> Dict[str, 
 
 
 if __name__ == "__main__":
+    generate_just_one_per_type = False
+
     arxiv = list(Path("data/arxiv").glob("*"))
     for arx in arxiv:
         asyncio.run(extract_plan_and_content_arxiv(arx))
+        if generate_just_one_per_type: break
 
     wikipedia_articles = [
         "https://en.wikipedia.org/wiki/Large_language_model",
@@ -912,13 +938,15 @@ if __name__ == "__main__":
         "https://en.wikipedia.org/wiki/2022%E2%80%932023_food_crises",
         "https://en.wikipedia.org/wiki/Economic_impacts_of_climate_change",
     ]
-    # for wiki in wikipedia_articles:
-    #     asyncio.run(extract_plan_and_content_wikipedia(wiki))
+    for wiki in wikipedia_articles:
+        asyncio.run(extract_plan_and_content_wikipedia(wiki))
+        if generate_just_one_per_type: break
 
     patents = list(Path("data/patents").glob("*"))
-    patents = [
-        "data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt",
-        "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt",
-    ]
+    # patents = [
+    #     "data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt",
+    #     "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt",
+    # ]
     for patent in patents:
         asyncio.run(extract_plan_and_content_patent(patent))
+        if generate_just_one_per_type: break
