@@ -30,13 +30,19 @@ from sklearn.metrics.pairwise import cosine_similarity
 _ = load_dotenv(find_dotenv())
 client = openai.ChatCompletion(api_key=os.getenv("OPENAI_API_KEY")) # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MAX_EMBEDDING_TOKEN_LENGTH = 4096
+MAX_EMBEDDING_TOKEN_LENGTH = 512
 
 OPENAI_EMBEDDING_MODEL_NAME = "text-embedding-ada-002"
 
 HUGGINGFACE_EMBEDDING_MODEL_NAME = "nomic-embed-text-v1" # "e5-base-v2"
 HUGGINGFACE_EMBEDDING_PATH = "nomic-ai/nomic-embed-text-v1" # "intfloat/e5-base-v2"
-HUGGINGFACE_EMBEDDING_PREFIX = "" # "query: "
+HUGGINGFACE_EMBEDDING_PREFIX = "" # e.g. e5-base-v2 might require "query: " to better match QA pairs
+
+ALLOW_parallel_gen_embed_section_content = True
+
+# Normalized by default
+embed_OPENAI = OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL_NAME, )
+embed_HF = HuggingFaceEmbeddings(model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True})
 
 def _num_tokens_from_string(string: str, encoding_name: str = "gpt-3.5-turbo") -> int:
     """Returns the number of tokens in a text string."""
@@ -112,6 +118,7 @@ def load_arxiv_paper(path: str | Path) -> Dict[str, str]:
     content = text[abstract_end:reference_start]
 
     print("EXTRACTION OVERVIEW:\nTitle:"+title[:50].replace("\n","\\n")+"...\nAbstract:"+abstract[:50].replace("\n","\\n")+"...\nContent:"+content[:50].replace("\n","\\n")+"...\nReferences:"+references[:50].replace("\n","\\n")+"...")
+
     article_dict = {
         "Title": title,
         "Abstract": abstract,
@@ -268,6 +275,12 @@ def load_wikipedia_url(url: str) -> Dict[str, str]:
         f"Extracted {num_sections} sections."
     )
 
+    #print("EXTRACTION OVERVIEW:\nTitle:"+title[:50].replace("\n","\\n")+"...\nAbstract:"+abstract[:50].replace("\n","\\n")+"...\nContent:"+content[:50].replace("\n","\\n")+"...\nReferences:"+references[:50].replace("\n","\\n")+"...")
+    print("EXTRACTION OVERVIEW:")
+    # print for each key in article_dict, display key and frst 50 characters of value
+    for key in article_dict.keys():
+        print(f"{key}: {article_dict[key][:80]}...")
+
     return article_dict
 
 
@@ -394,15 +407,6 @@ def _gen_embed_section_content(
     total_sections : int, optional
         The total number of sections, by default 1
     """
-    # Normalized by default
-    embed_OPENAI = OpenAIEmbeddings(
-        model=OPENAI_EMBEDDING_MODEL_NAME,
-    )
-
-    embed_HF = HuggingFaceEmbeddings(
-        model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True}
-    )
-
     section_json = {
         "section_id": id,
         "section": heading,
@@ -419,6 +423,50 @@ def _gen_embed_section_content(
 
     return section_json
 
+from typing import List, Dict
+
+def _gen_embed_section_content_batch(
+    headings: List[str], contents: List[str], ids: List[int], total_sections: int
+) -> List[Dict[str, str | List[float]]]:
+    """Given lists of headings and contents, returns a list of dictionaries
+    with the headings, contents, and embeddings for each section.
+
+    Parameters
+    ----------
+    headings : List[str]
+        The headings of the sections.
+    contents : List[str]
+        The contents of the sections.
+    ids : List[int]
+        The ids of the sections.
+    total_sections : int
+        The total number of sections.
+    """
+    section_jsons = []
+    heading_embeddings_1 = embed_OPENAI.embed_documents(headings)
+    heading_embeddings_2 = embed_HF.embed_documents([HUGGINGFACE_EMBEDDING_PREFIX + h for h in headings])
+    content_embeddings_1 = embed_OPENAI.embed_documents(contents)
+    content_embeddings_2 = embed_HF.embed_documents([HUGGINGFACE_EMBEDDING_PREFIX + c for c in contents])
+
+    for id, heading, content, emb_h1, emb_h2, emb_c1, emb_c2 in zip(
+            ids, headings, contents, heading_embeddings_1, heading_embeddings_2, content_embeddings_1, content_embeddings_2):
+        section_jsons.append({
+            "section_id": id,
+            "section": heading,
+            "content": content,
+            "section_embedding_1": emb_h1,
+            "section_embedding_2": emb_h2,
+            "content_embedding_1": emb_c1,
+            "content_embedding_2": emb_c2,
+        })
+
+        logger.info(
+            f"{id}/{total_sections} - created section + content embeddings for {heading} - SECTION: {heading[:50]}... CONTENT: {content[:50]}..."
+        )
+    
+    return section_jsons
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _gen_embed_plan(plan: List[dict], i: int) -> List[float]:
     """Calculate plan embedding by averaging the section embeddings and content embeddings
@@ -445,7 +493,22 @@ def _gen_embed_plan(plan: List[dict], i: int) -> List[float]:
     logger.info(f"Created plan embedding {i}")
     return total_mean
 
+def _parallel_gen_embed_section_content(headings, content, start_index, total_sections):
+    # Collect data for batch processing
+    headings_to_process = []
+    contents_to_process = []
+    indices = []
 
+    for i, (heading, content) in enumerate(zip(headings[start_index:], content[start_index:]), start=1):
+        headings_to_process.append(heading)
+        contents_to_process.append(content)
+        indices.append(i)
+
+    # Process embeddings in batch
+    plan = _gen_embed_section_content_batch(headings_to_process, contents_to_process, indices, total_sections)
+
+    return plan
+    
 def generate_embeddings_plan_and_section_content(
     article_dict: Dict, doc_type: str = "patent"
 ) -> Dict:
@@ -501,24 +564,19 @@ def generate_embeddings_plan_and_section_content(
     logger.info("Title: " + title)
     logger.info("Abstract: " + abstract)
 
-    plan = [
-        _gen_embed_section_content(
-            heading, content, id=i, total_sections=total_sections
-        )
-        for i, (heading, content) in enumerate(
-            zip(headings[start_index:], content[start_index:]), start=1
-        )
-    ]
+    if ALLOW_parallel_gen_embed_section_content:
+        plan = _parallel_gen_embed_section_content(headings, content, start_index, total_sections)
+    else:
+        plan = [
+            _gen_embed_section_content(
+                heading, content, id=i, total_sections=total_sections
+            )
+            for i, (heading, content) in enumerate(
+                zip(headings[start_index:], content[start_index:]), start=1
+            )
+        ]
     plan_embed_1 = _gen_embed_plan(plan, 1)
     plan_embed_2 = _gen_embed_plan(plan, 2)
-    # Normalized by default
-    embed_OPENAI = OpenAIEmbeddings(
-        model=OPENAI_EMBEDDING_MODEL_NAME,
-    )
-
-    embed_HF = HuggingFaceEmbeddings(
-        model_name=HUGGINGFACE_EMBEDDING_PATH, model_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "trust_remote_code": True}, encode_kwargs={"normalize_embeddings": True}
-    )
 
     try:
         plan_json = {
@@ -943,10 +1001,7 @@ if __name__ == "__main__":
         if generate_just_one_per_type: break
 
     patents = list(Path("data/patents").glob("*"))
-    # patents = [
-    #     "data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt",
-    #     "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt",
-    # ]
+    # patents = ["data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt", "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt"]
     for patent in patents:
         asyncio.run(extract_plan_and_content_patent(patent))
         if generate_just_one_per_type: break
