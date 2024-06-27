@@ -855,6 +855,132 @@ def generate_title(input: str | Path, doc_type: str) -> str:
     
     return title
 
+import re
+import json
+import uuid
+import os
+
+def extract_citations(text, references):
+    citations = re.findall(r'\\cite[t|p]*\{([^}]+)\}', text)
+    return list({citation for citation in citations if citation in references})
+
+def create_section_entry(section_id, section_title, content="", resources_cited=None):
+    if resources_cited is None:
+        resources_cited = []
+    return {
+        "section_id": section_id,
+        "section": section_title,
+        "content": content,
+        "resources_cited_id": [i for i, ref in enumerate(references) if ref in resources_cited],
+        "resources_cited_key": resources_cited,  # Keep the original keys as well for reference
+    }
+
+def clean_latex_content(content):
+    content = '\n'.join(line for line in content.split('\n') if not line.strip().startswith('%'))
+    content = re.sub(r'\\(usepackage|documentclass)\{.*?\}', '', content)
+    content = re.sub(r'\s+', ' ', content).strip()
+    return content
+
+def hierarchical_numbering(sections, method="counters"):
+    section_counters = {"section": 0, "subsection": 0, "subsubsection": 0}
+    numbered_sections = []
+   
+    for section_type, section_title in sections:
+        if method == "counters":
+            if section_type == "section":
+                section_counters["section"] += 1
+                section_counters["subsection"] = 0
+                section_counters["subsubsection"] = 0
+                section_number = f"{section_counters['section']}"
+            elif section_type == "subsection":
+                section_counters["subsection"] += 1
+                section_counters["subsubsection"] = 0
+                section_number = f"{section_counters['section']}.{section_counters['subsection']}"
+            elif section_type == "subsubsection":
+                section_counters["subsubsection"] += 1
+                section_number = f"{section_counters['section']}.{section_counters['subsection']}.{section_counters['subsubsection']}"
+        section_title = f"{section_number} {section_title}"
+        numbered_sections.append((section_type, section_title))
+   
+    return numbered_sections
+
+def extract_resources(bibtex_content):
+    resources = []
+    entries = re.findall(r'@(\w+)\{([^,]+),(.+?)\n\}', bibtex_content, re.DOTALL)
+    for i, (entry_type, citation_key, content) in enumerate(entries):
+        title_match = re.search(r'title\s*=\s*\{(.+?)\}', content, re.DOTALL)
+        author_match = re.search(r'author\s*=\s*\{(.+?)\}', content, re.DOTALL)
+        year_match = re.search(r'year\s*=\s*\{(.+?)\}', content)
+        url_match = re.search(r'url\s*=\s*\{(.+?)\}', content)
+        doi_match = re.search(r'doi\s*=\s*\{(.+?)\}', content)
+       
+        title = title_match.group(1).strip() if title_match else None
+        author = author_match.group(1).strip() if author_match else None
+        year = year_match.group(1).strip() if year_match else None
+        url = url_match.group(1).strip() if url_match else doi_match.group(1).strip() if doi_match else None
+       
+        resources.append({
+            "resource_id": i + 1,
+            "resource_key": citation_key.strip(),
+            "description": (title if title else "") + "\nAuthor:" + (author if author else "") + "\nYear:" + (year if year else ""),
+            "url": url
+        })
+    return resources
+
+async def extract_plan_and_content_latex(data_dir: str) -> Dict[str, Any]:
+    """Extracts plan and content from LaTeX files in the specified directory."""
+    tex_files = [f for f in os.listdir(data_dir) if f.endswith('.tex')]
+    for tex_file in tex_files:
+        bib_file = tex_file.replace('.tex', '.bib')
+        with open(os.path.join(data_dir, tex_file), 'r') as file:
+            latex_content = file.read()
+        with open(os.path.join(data_dir, bib_file), 'r') as file:
+            bibtex_content = file.read()
+        latex_content = clean_latex_content(latex_content)
+        title_match = re.search(r'\\title\{(.+?)\}', latex_content, re.DOTALL)
+        title = title_match.group(1).strip() if title_match else 'No Title Found'
+        abstract_match = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', latex_content, re.DOTALL | re.IGNORECASE) or \
+                         re.search(r'\\abstract\{(.+?)\}', latex_content, re.DOTALL) or \
+                         re.search(r'\\abst[ \n](.*?)\\xabst', latex_content, re.DOTALL) or \
+                         re.search(r'\\section\*\{abstract\}(.+?)(?=\\section|\Z)', latex_content, re.DOTALL | re.IGNORECASE)
+        abstract = abstract_match.group(1).strip() if abstract_match else 'No Abstract Found'
+        section_pattern = r'\\((?:sub)*section)\{(.+?)\}'
+        sections = re.findall(section_pattern, latex_content)
+        numbered_sections = hierarchical_numbering(sections, method="counters")
+        references = re.findall(r'@.*?\{(.*?),', bibtex_content, re.DOTALL)
+        plan = []
+        section_id = 0
+        cited_references = set()
+        for section_type, section_title in numbered_sections:
+            section_id += 1
+            original_section_title = section_title.split(" ", 1)[1]
+            section_regex = rf'\\{section_type}\{{{re.escape(original_section_title)}\}}(.*?)(?=\\(?:sub)*section\{{|\\end\{{document\}})'
+            section_content_match = re.search(section_regex, latex_content, re.DOTALL)
+            content = section_content_match.group(1).strip() if section_content_match else ''
+            resources_cited = extract_citations(content, references)
+            cited_references.update(resources_cited)
+            plan.append(create_section_entry(section_id, section_title, content, resources_cited))
+        resources = extract_resources(bibtex_content)
+        resources = [res for res in resources if res['resource_key'] in cited_references]
+        paper_data = {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "abstract": abstract,
+            "plan": plan,
+            "resources": resources
+        }
+        json_output = json.dumps(paper_data, indent=2)
+        json_output = re.sub(r'("resources_cited_(id|key)?"\s*:\s*\[\n\s*([^]]+?)\s*\])', lambda m: m.group(0).replace('\n', '').replace(' ', ''), json_output)
+        output_dir = './output/latex'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        json_filename = os.path.join(output_dir, tex_file.replace('.tex', '.json'))
+        with open(json_filename, 'w') as file:
+            file.write(json_output)
+        print(json_output[:500])
+    return paper_data
+
+
 async def extract_plan_and_content(input: str | Path, doc_type: str, skip_if_exists: bool = False) -> Dict[str, Any]:
     """Extract plans and content for a range of doc_types. Write ouputs to individual files.
     Return a dictionary containing the plan and content for the input."""
@@ -977,6 +1103,10 @@ async def extract_plan_and_content_patent(patent_file: str | Path) -> Dict[str, 
 
 if __name__ == "__main__":
     generate_just_one_per_type = False
+
+    # Add this section for LaTeX files
+    latex_dir = 'data/latex'
+    asyncio.run(extract_plan_and_content_latex(latex_dir))
 
     arxiv = list(Path("data/arxiv").glob("*"))
     for arx in arxiv:

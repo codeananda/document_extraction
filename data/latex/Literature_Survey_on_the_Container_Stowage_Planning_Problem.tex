@@ -1,0 +1,267 @@
+%% 
+%% Copyright 2007-2020 Elsevier Ltd
+%% 
+%% This file is part of the 'Elsarticle Bundle'.
+%% ---------------------------------------------
+%% 
+%% It may be distributed under the conditions of the LaTeX Project Public
+%% License, either version 1.2 of this license or (at your option) any
+%% later version.  The latest version of this license is in
+%%    http://www.latex-project.org/lppl.txt
+%% and version 1.2 or later is part of all distributions of LaTeX
+%% version 1999/12/01 or later.
+%% 
+%% The list of all files belonging to the 'Elsarticle Bundle' is
+%% given in the file `manifest.txt'.
+%% 
+
+%% Template article for Elsevier's document class `elsarticle'
+%% with numbered style bibliographic references
+%% SP 2008/03/01
+%%
+%% 
+%%
+%% $Id: elsarticle-template-num.tex 190 2020-11-23 11:12:32Z rishi $
+%%
+%%
+\documentclass[preprint,12pt,authoryear]{elsarticle}
+
+%% Use the option review to obtain double line spacing
+%% \documentclass[authoryear,preprint,review,12pt]{elsarticle}
+
+%% Use the options 1p,twocolumn; 3p; 3p,twocolumn; 5p; or 5p,twocolumn
+%% for a journal layout:
+%% \documentclass[final,1p,times]{elsarticle}
+%% \documentclass[final,1p,times,twocolumn]{elsarticle}
+%% \documentclass[final,3p,times]{elsarticle}
+%% \documentclass[final,3p,times,twocolumn]{elsarticle}
+%% \documentclass[final,5p,times]{elsarticle}
+%% \documentclass[final,5p,times,twocolumn]{elsarticle}
+
+%% For including figures, graphicx.sty has been loaded in
+%% elsarticle.cls. If you prefer to use the old commands
+%% please give \usepackage{epsfig}
+
+%% The amssymb package provides various useful mathematical symbols
+\usepackage{amssymb}
+\usepackage{amsmath}
+\allowdisplaybreaks
+%% The amsthm package provides extended theorem environments
+%% \usepackage{amsthm}
+
+%% The lineno packages adds line numbers. Start line numbering with
+%% \begin{linenumbers}, end it with \end{linenumbers}. Or switch it on
+%% for the whole article with \linenumbers.
+%% \usepackage{lineno}
+
+%% Use package to get landscape page 
+\usepackage{pdflscape}
+
+%% Use package for dots
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.9}
+\usetikzlibrary{patterns}
+\usepackage{pgf-pie}
+
+
+%\usepgfplotslibrary{external}
+%\tikzexternalize
+
+
+
+
+%% Use package for tables
+\usepackage{graphicx}
+\usepackage{tabularx}
+% \usepackage[table,xcdraw]{xcolor}
+% \usepackage{ltablex}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{hyperref}
+
+
+
+\journal{European Journal of Operational Research}
+
+\begin{document}
+
+\begin{frontmatter}
+
+%% Title, authors and addresses
+
+%% use the tnoteref command within \title for footnotes;
+%% use the tnotetext command for theassociated footnote;
+%% use the fnref command within \author or \address for footnotes;
+%% use the fntext command for theassociated footnote;
+%% use the corref command within \author for corresponding author footnotes;
+%% use the cortext command for theassociated footnote;
+%% use the ead command for the email address,
+%% and the form \ead[url] for the home page:
+%% \title{Title\tnoteref{label1}}
+%% \tnotetext[label1]{}
+%% \author{Name\corref{cor1}\fnref{label2}}
+%% \ead{email address}
+%% \ead[url]{home page}
+%% \fntext[label2]{}
+%% \cortext[cor1]{}
+%% \affiliation{organization={},
+%%             addressline={},
+%%             city={},
+%%             postcode={},
+%%             state={},
+%%             country={}}
+%% \fntext[label3]{}
+
+\title{Literature Survey on the Container Stowage\\ Planning Problem}
+
+%% use optional labels to link authors explicitly to addresses:
+%% \author[label1,label2]{}
+%% \affiliation[label1]{organization={},
+%%             addressline={},
+%%             city={},
+%%             postcode={},
+%%             state={},
+%%             country={}}
+%%
+%% \affiliation[label2]{organization={},
+%%             addressline={},
+%%             city={},
+%%             postcode={},
+%%             state={},
+%%             country={}}
+
+\author[inst1]{Jaike van Twiller}
+
+\affiliation[inst1]{organization={IT University of Copenhagen},%Department and Organization
+            addressline={Rued Langgaards Vej 7}, 
+            city={Copenhagen},
+            postcode={2300}, 
+            % state={State One},
+            country={Denmark}}
+
+\author[inst2]{Agnieszka Sivertsen}
+\author[inst3]{Dario Pacino\corref{cor1}}
+\ead{darpa@dtu.dk}
+%% \ead[url]{home page}
+\cortext[cor1]{}
+\author[inst1]{Rune Møller Jensen}
+
+\affiliation[inst2]{organization={Roskilde University},%Department and Organization
+            addressline={Universitetsvej 1}, 
+            city={Roskilde},
+            postcode={4000}, 
+            %state={State Two},
+            country={Denmark}}
+
+\affiliation[inst3]{organization={Technical University of Denmark},%Department and Organization
+            addressline={Bygningstorvet 116B}, 
+            city={Kgs. Lyngby},
+            postcode={2800}, 
+            % state={State Two},
+            country={Denmark}}
+
+\begin{abstract}
+%% Text of abstract
+Container shipping drives the global economy and is an eco-friendly mode of transportation. A key objective is to maximize the utilization of vessels, which is challenging due to the NP-hardness of stowage planning. This article surveys the literature on the Container Stowage Planning Problem (CSPP). We introduce a classification scheme to analyze single-port and multi-port CSPPs, as well as the hierarchical decomposition of CSPPs into the master and slot planning problem. Our survey shows that the area has a relatively small number of publications and that it is hard to evaluate the industrial applicability of many of the proposed solution methods due to the oversimplification of problem formulations. To address this issue, we propose a research agenda with directions for future work, including establishing a representative problem definition and providing new benchmark instances where needed. 
+
+%In the history of container stowage planning research, several problem formulations have been proposed. None of these formulations, however, adequately cover all of the existing combinatorial aspects in realistic container stowage. This literature survey aims to support the modeling of problem formulations and the implementation of solution methods. To do so, a classification scheme is proposed that analyzes single-port and multi-port container stowage planning problems, as well as the hierarchical decomposition of container stowage planning into the master bay and slot planning problem. Using this description of the state-of-the-art, we suggest a research agenda with recommendations for future work to advance the field towards fully automated container stowage planning.
+\end{abstract}
+
+%%Graphical abstract
+%\begin{graphicalabstract}
+%\includegraphics{grabs}
+%\end{graphicalabstract}
+
+%%Research highlights
+\begin{highlights}
+
+\item Literature review and classification scheme for the Container Stowage Planning Problem
+\item Identification of four significant groups of research: single-port, multi-port, master planning, and slot planning
+\item Comparison of problem formulations and solution approaches
+\item Description of minimal representative problem definition
+\item Publication of benchmarks instances
+\item Research agenda and discussion on the state of the art
+
+
+\end{highlights}
+
+\begin{keyword}
+%% keywords here, in the form: keyword \sep keyword
+OR in maritime industry \sep Literature survey \sep Container Stowage Planning \sep Benchmarks
+%% PACS codes here, in the form: \PACS code \sep code
+%\PACS 0000 \sep 1111
+%% MSC codes here, in the form: \MSC code \sep code
+%% or \MSC[2008] code \sep code (2000 is the default)
+%\MSC 0000 \sep 1111
+\end{keyword}
+
+\end{frontmatter}
+
+%% \linenumbers
+
+
+%% main text
+\section{Introduction}
+\label{sec:introduction}
+\input{chapters/01_introduction.tex}
+
+\section{The container stowage planning problem}
+\label{sec:stowagePlanning}
+\input{chapters/02_complexity_problem.tex}
+
+% RMJ \section{Literature classification}
+\section{Classification scheme}
+\label{sec:literatureSurvey}
+\input{chapters/03_survey_results.tex}
+
+%\section{Math Models}
+%\label{sec:mathModels}
+%\input{chapters/04_pacino11model.tex}
+
+\section{Research Agenda}
+\label{sec:mathModels}
+\input{chapters/05_research_agenda.tex}
+\section{Conclusion}
+\label{sec:conclusion}
+This paper provides a review of the literature that studies the Container Stowage Planning Problem. The studies are summarized according to a classification scheme that outlines the fundamental characteristics of the problem and the applied solution approaches. As there is a lack of a common understanding of the problem characteristics, this paper provided a description of a representative problem definition based on several years of academic and industrial collaborations. In light of this definition, a research agenda is proposed for each of the major branches of research in the Container Stowage Planning Problem (single-port planning, multi-port planning, master planning, and slot planning). Moreover, this paper identifies, and in one case, provides publicly available benchmark sets in the hope that future research will make use of them as a reference point and a way to compare results. Where possible, these benchmarks have been used to compare recent research results, and provide some computational comparison. It is our hope that this survey will help improve the field and acts as inspiration for future developments.
+
+\section*{Acknowledgements}
+This work is partially funded by the Danish Maritime Fund (grant nr. 2021-069) and the Innovation Fund Denmark (grant no. 1044-00145A).
+
+%% The Appendices part is started with the command \appendix;
+%% appendix sections are then done as normal sections
+\clearpage
+\appendix
+\section{Classification tables}
+\label{app:classification_tables}
+\input{appendices/02_full_tables.tex}
+\clearpage
+\section{Collected result tables}
+\label{app:result_tables}
+\input{appendices/01_appendixA.tex}
+\clearpage
+\section{Master planning formulations}
+\input{chapters/04_pacino11model}
+
+%% Suppress URL+prefix in bibliography
+\def\urlprefix{}
+\def\url#1{}
+
+%% If you have bibdatabase file and want bibtex to generate the
+%% bibitems, please use
+\bibliographystyle{formatting/elsarticle-harv}
+\bibliography{references/stowage_papers}
+%% else use the following coding to input the bibitems directly in the
+%% TeX file.
+% \begin{thebibliography}{00}
+% %% \bibitem{label}
+% %% Text of bibliographic item
+% \bibitem{}
+% \end{thebibliography}
+
+\end{document}
+\endinput
+%%
+%% End of file `elsarticle-template-num.tex'.
