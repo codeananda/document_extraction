@@ -1,5 +1,5 @@
 {
-  "id": "fe93ed42-ba3f-4e0a-8b36-948ca1ebfebe",
+  "id": "04087b78-80e3-4a8b-8992-a92e5491585e",
   "title": "Literature Survey on the Container Stowage\\\\ Planning Problem",
   "abstract": "Container shipping drives the global economy and is an eco-friendly mode of transportation. A key objective is to maximize the utilization of vessels, which is challenging due to the NP-hardness of stowage planning. This article surveys the literature on the Container Stowage Planning Problem (CSPP). We introduce a classification scheme to analyze single-port and multi-port CSPPs, as well as the hierarchical decomposition of CSPPs into the master and slot planning problem. Our survey shows that the area has a relatively small number of publications and that it is hard to evaluate the industrial applicability of many of the proposed solution methods due to the oversimplification of problem formulations. To address this issue, we propose a research agenda with directions for future work, including establishing a representative problem definition and providing new benchmark instances where needed.",
   "plan": [

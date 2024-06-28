@@ -930,13 +930,13 @@ def latex_sections_hierarchical_numbering(sections, method="counters"):
 
 def biblatex_extract_resources(bibtex_content):
     resources = []
-    entries = re.findall(r'@(\w+)\{([^,]+),(.+?)\n\}', bibtex_content, re.DOTALL)
+    entries = re.findall(r'@(\w+)\{([^,]+),(.+?)\n\}', bibtex_content, re.DOTALL | re.IGNORECASE)
     for i, (entry_type, citation_key, content) in enumerate(entries):
-        title_match = re.search(r'title\s*=\s*\{(.+?)\}', content, re.DOTALL)
-        author_match = re.search(r'author\s*=\s*\{(.+?)\}', content, re.DOTALL)
+        title_match = re.search(r'title\s*=\s*\{(.+?)\}', content, re.DOTALL | re.IGNORECASE)
+        author_match = re.search(r'author\s*=\s*\{(.+?)\}', content, re.DOTALL | re.IGNORECASE)
         year_match = re.search(r'year\s*=\s*\{(.+?)\}', content)
         url_match = re.search(r'url\s*=\s*\{(.+?)\}', content)
-        doi_match = re.search(r'doi\s*=\s*\{(.+?)\}', content)
+        doi_match = re.search(r'doi\s*=\s*\{(.+?)\}', content, re.DOTALL)
 
         title = title_match.group(1).strip() if title_match else None
         author = author_match.group(1).strip() if author_match else None
@@ -965,12 +965,12 @@ async def extract_plan_and_content_latex(tex_file: Path, without_embeddings=Fals
 
     latex_content = latex_clean_content(latex_content)
 
-    title_match = re.search(r'\\title\{(.+?)\}', latex_content, re.DOTALL)
+    title_match = re.search(r'\\title\{(.+?)\}', latex_content, re.DOTALL | re.IGNORECASE)
     title = title_match.group(1).strip() if title_match else 'No Title Found'
 
     abstract_match = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', latex_content, re.DOTALL | re.IGNORECASE) or \
-                     re.search(r'\\abstract\{(.+?)\}', latex_content, re.DOTALL) or \
-                     re.search(r'\\abst[ \n](.*?)\\xabst', latex_content, re.DOTALL) or \
+                     re.search(r'\\abstract\{(.+?)\}', latex_content, re.DOTALL | re.IGNORECASE) or \
+                     re.search(r'\\abst[ \n](.*?)\\xabst', latex_content, re.DOTALL | re.IGNORECASE) or \
                      re.search(r'\\section\*\{abstract\}(.+?)(?=\\section|\Z)', latex_content, re.DOTALL | re.IGNORECASE)
     abstract = abstract_match.group(1).strip() if abstract_match else 'No Abstract Found'
 
@@ -978,7 +978,7 @@ async def extract_plan_and_content_latex(tex_file: Path, without_embeddings=Fals
     sections = re.findall(section_pattern, latex_content)
     numbered_sections = latex_sections_hierarchical_numbering(sections, method="counters")
 
-    references = re.findall(r'@.*?\{(.*?),', bibtex_content, re.DOTALL)
+    references = re.findall(r'@.*?\{(.*?),', bibtex_content, re.DOTALL | re.IGNORECASE)
     plan = []
     section_id = 0
     cited_references = set()
@@ -1165,7 +1165,7 @@ if __name__ == "__main__":
     for latex_paper in latex_papers:
         asyncio.run(extract_plan_and_content_latex(latex_paper))
         if generate_just_one_per_type: break
-
+    
     arxiv = list(Path("data/arxiv").glob("*"))
     for arx in arxiv:
         asyncio.run(extract_plan_and_content_arxiv(arx))
