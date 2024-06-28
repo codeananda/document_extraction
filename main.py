@@ -443,10 +443,19 @@ def _gen_embed_section_content_batch(
         The total number of sections.
     """
     section_jsons = []
+
     heading_embeddings_1 = embed_OPENAI.embed_documents(headings)
-    heading_embeddings_2 = embed_HF.embed_documents([HUGGINGFACE_EMBEDDING_PREFIX + h for h in headings])
     content_embeddings_1 = embed_OPENAI.embed_documents(contents)
-    content_embeddings_2 = embed_HF.embed_documents([HUGGINGFACE_EMBEDDING_PREFIX + c for c in contents])
+
+    def HF_embed_split(contents, n): return sum([embed_HF.embed_documents([HUGGINGFACE_EMBEDDING_PREFIX + c for c in contents[i::n]]) for i in range(n)], [])
+    n = 1
+    while True: 
+        try: heading_embeddings_2 = HF_embed_split(headings, n); break
+        except: n *= 2; print(f"Failed heading_embeddings_2 to HF embed content 1 batch of {len(contents)/(n/2)} trying with {n} splits")
+    n = 1
+    while True: 
+        try: content_embeddings_2 = HF_embed_split(contents, n); break
+        except: n *= 2; print(f"Failed content_embeddings_2 to HF embed content 1 batch of {len(contents)/(n/2)} trying with {n} splits")
 
     for id, heading, content, emb_h1, emb_h2, emb_c1, emb_c2 in zip(
             ids, headings, contents, heading_embeddings_1, heading_embeddings_2, content_embeddings_1, content_embeddings_2):
@@ -519,7 +528,7 @@ def generate_embeddings_plan_and_section_content(
         f"doc_type must be one of 'patent', 'wikipedia', or 'arxiv'. "
         f"Received {doc_type}"
     )
-    if doc_type not in ["patent", "wikipedia", "arxiv"]:
+    if doc_type not in ["patent", "wikipedia", "arxiv", "latex"]:
         raise ValueError(doc_type_error_msg)
     logger.info("Creating plan json")
     headings = list(article_dict.keys())
@@ -548,7 +557,7 @@ def generate_embeddings_plan_and_section_content(
             abstract = "no abstract"
         total_sections = len(headings) - 2
         start_index = 2
-    elif doc_type == "arxiv":
+    elif doc_type in ["arxiv"]:
         # The first key/value pairs in arxiv dicts are {'Title': title, 'Abstract': abstract}
         # so we take the first two elements of content
         title = content[0]
@@ -558,6 +567,11 @@ def generate_embeddings_plan_and_section_content(
             abstract = "no abstract"
         total_sections = len(headings) - 2
         start_index = 2
+    elif doc_type == "latex":
+        title = article_dict["title"]
+        abstract = article_dict["abstract"]
+        start_index = 0
+        total_sections = len(headings)
     else:
         raise ValueError(doc_type_error_msg)
 
@@ -814,7 +828,6 @@ def compare_documents_sections(
     """
     return _compare_documents(document1, document2, compare_on="section")
 
-
 def compare_documents_content(
     document1: str | Path | Dict[str, Any],
     document2: str | Path | Dict[str, Any],
@@ -834,7 +847,6 @@ def compare_documents_content(
     """
     # TODO - do we really need method? Or can we just do every metric every time?
     return _compare_documents(document1, document2, compare_on="content")
-
 
 def generate_title(input: str | Path, doc_type: str) -> str:
     """Extracts the title from the input based on the document type."""
@@ -859,12 +871,15 @@ import re
 import json
 import uuid
 import os
+import asyncio
+from pathlib import Path
 
-def extract_citations(text, references):
+# Helper functions for LaTeX processing
+def latex_extract_citations(text, references):
     citations = re.findall(r'\\cite[t|p]*\{([^}]+)\}', text)
     return list({citation for citation in citations if citation in references})
 
-def create_section_entry(section_id, section_title, content="", resources_cited=None):
+def plan_create_section_entry(section_id, section_title, content="", resources_cited=None, references=[]):
     if resources_cited is None:
         resources_cited = []
     return {
@@ -872,19 +887,28 @@ def create_section_entry(section_id, section_title, content="", resources_cited=
         "section": section_title,
         "content": content,
         "resources_cited_id": [i for i, ref in enumerate(references) if ref in resources_cited],
-        "resources_cited_key": resources_cited,  # Keep the original keys as well for reference
+        "resources_cited_key": resources_cited,
     }
 
-def clean_latex_content(content):
+def latex_clean_content(content):
+    # Remove lines starting with %
     content = '\n'.join(line for line in content.split('\n') if not line.strip().startswith('%'))
+    
+    # Remove unnecessary LaTeX commands
     content = re.sub(r'\\(usepackage|documentclass)\{.*?\}', '', content)
+    
+    # Remove LaTeX environments
+    #content = re.sub(r'\\begin\{.*?\}.*?\\end\{.*?\}', '', content, flags=re.DOTALL)
+    
+    # Remove extra whitespace
     content = re.sub(r'\s+', ' ', content).strip()
+    
     return content
 
-def hierarchical_numbering(sections, method="counters"):
+def latex_sections_hierarchical_numbering(sections, method="counters"):
     section_counters = {"section": 0, "subsection": 0, "subsubsection": 0}
     numbered_sections = []
-   
+
     for section_type, section_title in sections:
         if method == "counters":
             if section_type == "section":
@@ -899,12 +923,12 @@ def hierarchical_numbering(sections, method="counters"):
             elif section_type == "subsubsection":
                 section_counters["subsubsection"] += 1
                 section_number = f"{section_counters['section']}.{section_counters['subsection']}.{section_counters['subsubsection']}"
-        section_title = f"{section_number} {section_title}"
+            section_title = f"{section_number} {section_title}"
         numbered_sections.append((section_type, section_title))
-   
+
     return numbered_sections
 
-def extract_resources(bibtex_content):
+def biblatex_extract_resources(bibtex_content):
     resources = []
     entries = re.findall(r'@(\w+)\{([^,]+),(.+?)\n\}', bibtex_content, re.DOTALL)
     for i, (entry_type, citation_key, content) in enumerate(entries):
@@ -913,73 +937,105 @@ def extract_resources(bibtex_content):
         year_match = re.search(r'year\s*=\s*\{(.+?)\}', content)
         url_match = re.search(r'url\s*=\s*\{(.+?)\}', content)
         doi_match = re.search(r'doi\s*=\s*\{(.+?)\}', content)
-       
+
         title = title_match.group(1).strip() if title_match else None
         author = author_match.group(1).strip() if author_match else None
         year = year_match.group(1).strip() if year_match else None
         url = url_match.group(1).strip() if url_match else doi_match.group(1).strip() if doi_match else None
-       
+
         resources.append({
             "resource_id": i + 1,
             "resource_key": citation_key.strip(),
-            "description": (title if title else "") + "\nAuthor:" + (author if author else "") + "\nYear:" + (year if year else ""),
+            "description": f"{title if title else ''}\nAuthor:{author if author else ''}\nYear:{year if year else ''}",
             "url": url
         })
     return resources
 
-async def extract_plan_and_content_latex(data_dir: str) -> Dict[str, Any]:
-    """Extracts plan and content from LaTeX files in the specified directory."""
-    tex_files = [f for f in os.listdir(data_dir) if f.endswith('.tex')]
-    for tex_file in tex_files:
-        bib_file = tex_file.replace('.tex', '.bib')
-        with open(os.path.join(data_dir, tex_file), 'r') as file:
-            latex_content = file.read()
-        with open(os.path.join(data_dir, bib_file), 'r') as file:
-            bibtex_content = file.read()
-        latex_content = clean_latex_content(latex_content)
-        title_match = re.search(r'\\title\{(.+?)\}', latex_content, re.DOTALL)
-        title = title_match.group(1).strip() if title_match else 'No Title Found'
-        abstract_match = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', latex_content, re.DOTALL | re.IGNORECASE) or \
-                         re.search(r'\\abstract\{(.+?)\}', latex_content, re.DOTALL) or \
-                         re.search(r'\\abst[ \n](.*?)\\xabst', latex_content, re.DOTALL) or \
-                         re.search(r'\\section\*\{abstract\}(.+?)(?=\\section|\Z)', latex_content, re.DOTALL | re.IGNORECASE)
-        abstract = abstract_match.group(1).strip() if abstract_match else 'No Abstract Found'
-        section_pattern = r'\\((?:sub)*section)\{(.+?)\}'
-        sections = re.findall(section_pattern, latex_content)
-        numbered_sections = hierarchical_numbering(sections, method="counters")
-        references = re.findall(r'@.*?\{(.*?),', bibtex_content, re.DOTALL)
-        plan = []
-        section_id = 0
-        cited_references = set()
-        for section_type, section_title in numbered_sections:
-            section_id += 1
-            original_section_title = section_title.split(" ", 1)[1]
-            section_regex = rf'\\{section_type}\{{{re.escape(original_section_title)}\}}(.*?)(?=\\(?:sub)*section\{{|\\end\{{document\}})'
-            section_content_match = re.search(section_regex, latex_content, re.DOTALL)
-            content = section_content_match.group(1).strip() if section_content_match else ''
-            resources_cited = extract_citations(content, references)
-            cited_references.update(resources_cited)
-            plan.append(create_section_entry(section_id, section_title, content, resources_cited))
-        resources = extract_resources(bibtex_content)
-        resources = [res for res in resources if res['resource_key'] in cited_references]
-        paper_data = {
-            "id": str(uuid.uuid4()),
-            "title": title,
-            "abstract": abstract,
-            "plan": plan,
-            "resources": resources
-        }
-        json_output = json.dumps(paper_data, indent=2)
-        json_output = re.sub(r'("resources_cited_(id|key)?"\s*:\s*\[\n\s*([^]]+?)\s*\])', lambda m: m.group(0).replace('\n', '').replace(' ', ''), json_output)
-        output_dir = './output/latex'
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        json_filename = os.path.join(output_dir, tex_file.replace('.tex', '.json'))
+# Main function to extract plan and content from LaTeX files
+async def extract_plan_and_content_latex(tex_file: Path, without_embeddings=False, output_dir = './output/latex') -> Dict[str, Any]:
+    data_dir = tex_file.parent
+    tex_filename = tex_file.name
+    bib_filename = tex_filename.replace('.tex', '.bib')
+
+    with open(tex_file, 'r') as file:
+        latex_content = file.read()
+
+    with open(data_dir / bib_filename, 'r') as file:
+        bibtex_content = file.read()
+
+    latex_content = latex_clean_content(latex_content)
+
+    title_match = re.search(r'\\title\{(.+?)\}', latex_content, re.DOTALL)
+    title = title_match.group(1).strip() if title_match else 'No Title Found'
+
+    abstract_match = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', latex_content, re.DOTALL | re.IGNORECASE) or \
+                     re.search(r'\\abstract\{(.+?)\}', latex_content, re.DOTALL) or \
+                     re.search(r'\\abst[ \n](.*?)\\xabst', latex_content, re.DOTALL) or \
+                     re.search(r'\\section\*\{abstract\}(.+?)(?=\\section|\Z)', latex_content, re.DOTALL | re.IGNORECASE)
+    abstract = abstract_match.group(1).strip() if abstract_match else 'No Abstract Found'
+
+    section_pattern = r'\\((?:sub)*section)\{(.+?)\}'
+    sections = re.findall(section_pattern, latex_content)
+    numbered_sections = latex_sections_hierarchical_numbering(sections, method="counters")
+
+    references = re.findall(r'@.*?\{(.*?),', bibtex_content, re.DOTALL)
+    plan = []
+    section_id = 0
+    cited_references = set()
+    section_dict = {}  # Dictionary to hold section titles and their content
+
+    for section_type, section_title in numbered_sections:
+        section_id += 1
+
+        original_section_title = section_title.split(" ", 1)[1]
+        section_regex = rf'\\{section_type}\{{{re.escape(original_section_title)}\}}(.*?)(?=\\(?:sub)*section\{{|\\end\{{document\}})'
+        section_content_match = re.search(section_regex, latex_content, re.DOTALL)
+        content = section_content_match.group(1).strip() if section_content_match else ''
+
+        resources_cited = latex_extract_citations(content, references)
+        cited_references.update(resources_cited)
+
+        plan.append(plan_create_section_entry(section_id, section_title, content, resources_cited, references))
+        section_dict[section_title] = content
+
+    resources = biblatex_extract_resources(bibtex_content)
+    resources = [res for res in resources if res['resource_key'] in cited_references]
+
+    paper_data = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "abstract": abstract,
+        "plan": plan,
+        "resources": resources
+    }
+
+    json_output = json.dumps(paper_data, indent=2)
+    json_output = re.sub(r'("resources_cited_(id|key)?"\s*:\s*\[\n\s*([^]]+?)\s*\])', lambda m: m.group(0).replace('\n', '').replace(' ', ''), json_output)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if without_embeddings:
+        json_filename = os.path.join(output_dir, tex_filename.replace('.tex', '.json'))
+
         with open(json_filename, 'w') as file:
             file.write(json_output)
-        print(json_output[:500])
-    return paper_data
 
+        print(f"Successfully processed: {tex_filename}")
+        return paper_data
+    
+    else:
+        # Process embeddings
+        section_dict["title"] = title  # Adding title for embedding generation
+        section_dict["abstract"] = abstract  # Adding abstract for embedding generation
+        paper_data_with_embeddings = generate_embeddings_plan_and_section_content(section_dict, doc_type="latex")
+        json_filename = os.path.join(output_dir, tex_filename.replace('.tex', '_with_embeddings.json'))
+
+        with open(json_filename, 'w') as file:
+            json.dump(paper_data_with_embeddings, file, indent=4)
+
+        print(f"Successfully processed: {tex_filename}")
+        return paper_data_with_embeddings
 
 async def extract_plan_and_content(input: str | Path, doc_type: str, skip_if_exists: bool = False) -> Dict[str, Any]:
     """Extract plans and content for a range of doc_types. Write ouputs to individual files.
@@ -1102,11 +1158,13 @@ async def extract_plan_and_content_patent(patent_file: str | Path) -> Dict[str, 
 
 
 if __name__ == "__main__":
-    generate_just_one_per_type = False
+    generate_just_one_per_type = True
 
-    # Add this section for LaTeX files
-    latex_dir = 'data/latex'
-    asyncio.run(extract_plan_and_content_latex(latex_dir))
+    # Process LaTeX files
+    latex_papers = list(Path("data/latex").glob("*.tex"))
+    for latex_paper in latex_papers:
+        asyncio.run(extract_plan_and_content_latex(latex_paper))
+        if generate_just_one_per_type: break
 
     arxiv = list(Path("data/arxiv").glob("*"))
     for arx in arxiv:

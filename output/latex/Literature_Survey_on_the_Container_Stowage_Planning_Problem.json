@@ -1,0 +1,64 @@
+{
+  "id": "fe93ed42-ba3f-4e0a-8b36-948ca1ebfebe",
+  "title": "Literature Survey on the Container Stowage\\\\ Planning Problem",
+  "abstract": "Container shipping drives the global economy and is an eco-friendly mode of transportation. A key objective is to maximize the utilization of vessels, which is challenging due to the NP-hardness of stowage planning. This article surveys the literature on the Container Stowage Planning Problem (CSPP). We introduce a classification scheme to analyze single-port and multi-port CSPPs, as well as the hierarchical decomposition of CSPPs into the master and slot planning problem. Our survey shows that the area has a relatively small number of publications and that it is hard to evaluate the industrial applicability of many of the proposed solution methods due to the oversimplification of problem formulations. To address this issue, we propose a research agenda with directions for future work, including establishing a representative problem definition and providing new benchmark instances where needed.",
+  "plan": [
+    {
+      "section_id": 1,
+      "section": "1 Introduction",
+      "content": "\\label{sec:introduction} \\input{chapters/01_introduction.tex}",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 2,
+      "section": "2 The container stowage planning problem",
+      "content": "\\label{sec:stowagePlanning} \\input{chapters/02_complexity_problem.tex}",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 3,
+      "section": "3 Classification scheme",
+      "content": "\\label{sec:literatureSurvey} \\input{chapters/03_survey_results.tex}",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 4,
+      "section": "4 Research Agenda",
+      "content": "\\label{sec:mathModels} \\input{chapters/05_research_agenda.tex}",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 5,
+      "section": "5 Conclusion",
+      "content": "\\label{sec:conclusion} This paper provides a review of the literature that studies the Container Stowage Planning Problem. The studies are summarized according to a classification scheme that outlines the fundamental characteristics of the problem and the applied solution approaches. As there is a lack of a common understanding of the problem characteristics, this paper provided a description of a representative problem definition based on several years of academic and industrial collaborations. In light of this definition, a research agenda is proposed for each of the major branches of research in the Container Stowage Planning Problem (single-port planning, multi-port planning, master planning, and slot planning). Moreover, this paper identifies, and in one case, provides publicly available benchmark sets in the hope that future research will make use of them as a reference point and a way to compare results. Where possible, these benchmarks have been used to compare recent research results, and provide some computational comparison. It is our hope that this survey will help improve the field and acts as inspiration for future developments. \\section*{Acknowledgements} This work is partially funded by the Danish Maritime Fund (grant nr. 2021-069) and the Innovation Fund Denmark (grant no. 1044-00145A). \\clearpage \\appendix",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 6,
+      "section": "6 Classification tables",
+      "content": "\\label{app:classification_tables} \\input{appendices/02_full_tables.tex} \\clearpage",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 7,
+      "section": "7 Collected result tables",
+      "content": "\\label{app:result_tables} \\input{appendices/01_appendixA.tex} \\clearpage",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    },
+    {
+      "section_id": 8,
+      "section": "8 Master planning formulations",
+      "content": "\\input{chapters/04_pacino11model} \\def\\urlprefix{} \\def\\url#1{} \\bibliographystyle{formatting/elsarticle-harv} \\bibliography{references/stowage_papers}",
+      "resources_cited_id": [],
+      "resources_cited_key": []
+    }
+  ],
+  "resources": []
+}
