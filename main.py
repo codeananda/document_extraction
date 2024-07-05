@@ -502,7 +502,7 @@ def _gen_embed_plan(plan: List[dict], i: int) -> List[float]:
     logger.info(f"Created plan embedding {i}")
     return total_mean
 
-def _parallel_gen_embed_section_content(headings, content, start_index, total_sections):
+def _parallel_gen_embed_section_content(headings, content, start_index, total_sections, initial_plan=None):
     # Collect data for batch processing
     headings_to_process = []
     contents_to_process = []
@@ -515,6 +515,10 @@ def _parallel_gen_embed_section_content(headings, content, start_index, total_se
 
     # Process embeddings in batch
     plan = _gen_embed_section_content_batch(headings_to_process, contents_to_process, indices, total_sections)
+    # Merge dict data for each element of plan if initial_plan is provided
+    if initial_plan:
+        for i, (p, ip) in enumerate(zip(plan, initial_plan), start=1):
+            p.update(ip)
 
     return plan
     
@@ -531,22 +535,18 @@ def generate_embeddings_plan_and_section_content(
     if doc_type not in ["patent", "wikipedia", "arxiv", "latex"]:
         raise ValueError(doc_type_error_msg)
     logger.info("Creating plan json")
-    headings = list(article_dict.keys())
-    content = list(article_dict.values())
 
     if doc_type == "wikipedia":
-        # First key/value pair in wikipedia dict is {title: abstract}. So we can take
-        # the first heading and first content
-
+        headings = list(article_dict.keys())
+        content = list(article_dict.values())
         # Wikipedia titles are of form 'h1 Example' so we remove the 'h1 '
         title = headings[0][3:]
         abstract = content[0]
         total_sections = len(headings) - 1
         start_index = 1
     elif doc_type == "patent":
-        # First key/value pairs in patent dict are {'title': title, 'abstract': abstract}
-        # so we take the first two elements of content
-
+        headings = list(article_dict.keys())
+        content = list(article_dict.values())
         # Titles are separated by tabs, the last element is the actual title
         title = content[0].split("\t")[-1].strip()
         # Remove illegal characters from title (it's used as a filename)
@@ -558,6 +558,8 @@ def generate_embeddings_plan_and_section_content(
         total_sections = len(headings) - 2
         start_index = 2
     elif doc_type in ["arxiv"]:
+        headings = list(article_dict.keys())
+        content = list(article_dict.values())
         # The first key/value pairs in arxiv dicts are {'Title': title, 'Abstract': abstract}
         # so we take the first two elements of content
         title = content[0]
@@ -568,6 +570,9 @@ def generate_embeddings_plan_and_section_content(
         total_sections = len(headings) - 2
         start_index = 2
     elif doc_type == "latex":
+        # Loop through article_dict["plan"] and extract headings and content
+        headings = [x["section"] for x in article_dict["plan"]]
+        content = [x["content"] for x in article_dict["plan"]]
         title = article_dict["title"]
         abstract = article_dict["abstract"]
         start_index = 0
@@ -579,7 +584,7 @@ def generate_embeddings_plan_and_section_content(
     logger.info("Abstract: " + abstract)
 
     if ALLOW_parallel_gen_embed_section_content:
-        plan = _parallel_gen_embed_section_content(headings, content, start_index, total_sections)
+        plan = _parallel_gen_embed_section_content(headings, content, start_index, total_sections, article_dict.get("plan", None))
     else:
         plan = [
             _gen_embed_section_content(
@@ -594,7 +599,7 @@ def generate_embeddings_plan_and_section_content(
 
     try:
         plan_json = {
-            "id": str(uuid4()),
+            "id": str(uuid4()) if "id" not in article_dict else article_dict["id"],
             "title": title,
             "abstract": abstract,
             "title_embedding_1": embed_OPENAI.embed_query(title),
@@ -1026,9 +1031,9 @@ async def extract_plan_and_content_latex(tex_file: Path, without_embeddings=Fals
     
     else:
         # Process embeddings
-        section_dict["title"] = title  # Adding title for embedding generation
-        section_dict["abstract"] = abstract  # Adding abstract for embedding generation
-        paper_data_with_embeddings = generate_embeddings_plan_and_section_content(section_dict, doc_type="latex")
+        #section_dict["title"] = title  # Adding title for embedding generation
+        #section_dict["abstract"] = abstract  # Adding abstract for embedding generation
+        paper_data_with_embeddings = generate_embeddings_plan_and_section_content(paper_data, doc_type="latex")
         json_filename = os.path.join(output_dir, tex_filename.replace('.tex', '_with_embeddings.json'))
 
         with open(json_filename, 'w') as file:
@@ -1158,38 +1163,48 @@ async def extract_plan_and_content_patent(patent_file: str | Path) -> Dict[str, 
 
 
 if __name__ == "__main__":
-    generate_just_one_per_type = True
+    # Ask input preference to generate for: all (Enter), 1 for each type (1), or just an example of a given type (Latex: L, Arxiv: A, Wikipedia: W, Patent: P)
+    output_preference = input("Generate for all (Enter), 1 for each type (1), or just an example of a given type (Latex: L, Arxiv: A, Wikipedia: W, Patent: P): ").lower()
 
     # Process LaTeX files
-    latex_papers = list(Path("data/latex").glob("*.tex"))
-    for latex_paper in latex_papers:
-        asyncio.run(extract_plan_and_content_latex(latex_paper))
-        if generate_just_one_per_type: break
-    
-    arxiv = list(Path("data/arxiv").glob("*"))
-    for arx in arxiv:
-        asyncio.run(extract_plan_and_content_arxiv(arx))
-        if generate_just_one_per_type: break
+    if output_preference in ["", "1", "l"]:
+        #latex_papers = list(Path("data/latex").glob("Macroeconomic_*.tex"))
+        latex_papers = list(Path("data/latex").glob("*.tex"))
+        for latex_paper in latex_papers:
+            asyncio.run(extract_plan_and_content_latex(latex_paper, without_embeddings=False))
+            if output_preference == "1": break
+            elif output_preference == "l": exit()
 
-    wikipedia_articles = [
-        "https://en.wikipedia.org/wiki/Large_language_model",
-        "https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)",
-        "https://en.wikipedia.org/wiki/Dual-phase_evolution",
-        "https://en.wikipedia.org/wiki/Simulated_annealing",
-        "https://en.wikipedia.org/wiki/Tessellation",
-        "https://en.wikipedia.org/wiki/Climate_change",
-        "https://en.wikipedia.org/wiki/DNA_nanotechnology",
-        "https://en.wikipedia.org/wiki/Self-driving_car",
-        "https://en.wikipedia.org/wiki/Unmanned_aerial_vehicle",
-        "https://en.wikipedia.org/wiki/2022%E2%80%932023_food_crises",
-        "https://en.wikipedia.org/wiki/Economic_impacts_of_climate_change",
-    ]
-    for wiki in wikipedia_articles:
-        asyncio.run(extract_plan_and_content_wikipedia(wiki))
-        if generate_just_one_per_type: break
+    if output_preference in ["", "1", "a"]:
+        arxiv = list(Path("data/arxiv").glob("*"))
+        for arx in arxiv:
+            asyncio.run(extract_plan_and_content_arxiv(arx))
+            if output_preference == "1": break
+            elif output_preference == "a": exit()
 
-    patents = list(Path("data/patents").glob("*"))
-    # patents = ["data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt", "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt"]
-    for patent in patents:
-        asyncio.run(extract_plan_and_content_patent(patent))
-        if generate_just_one_per_type: break
+    if output_preference in ["", "1", "w"]:
+        wikipedia_articles = [
+            "https://en.wikipedia.org/wiki/Large_language_model",
+            "https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)",
+            "https://en.wikipedia.org/wiki/Dual-phase_evolution",
+            "https://en.wikipedia.org/wiki/Simulated_annealing",
+            "https://en.wikipedia.org/wiki/Tessellation",
+            "https://en.wikipedia.org/wiki/Climate_change",
+            "https://en.wikipedia.org/wiki/DNA_nanotechnology",
+            "https://en.wikipedia.org/wiki/Self-driving_car",
+            "https://en.wikipedia.org/wiki/Unmanned_aerial_vehicle",
+            "https://en.wikipedia.org/wiki/2022%E2%80%932023_food_crises",
+            "https://en.wikipedia.org/wiki/Economic_impacts_of_climate_change",
+        ]
+        for wiki in wikipedia_articles:
+            asyncio.run(extract_plan_and_content_wikipedia(wiki))
+            if output_preference == "1": break
+            elif output_preference == "w": exit()
+
+    if output_preference in ["", "1", "p"]:
+        patents = list(Path("data/patents").glob("*"))
+        # patents = ["data/patents/MICROWAVE TURNTABLE CONVECTION HEATER.txt", "data/patents/PHARMACEUTICAL COMPOSITIONS OF GALLIUM COMPLEXES OF 3-HYDROXY-4-PYRONES.txt"]
+        for patent in patents:
+            asyncio.run(extract_plan_and_content_patent(patent))
+            if output_preference == "1": break
+            elif output_preference == "p": exit()
